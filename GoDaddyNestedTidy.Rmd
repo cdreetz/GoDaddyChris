@@ -1,10 +1,9 @@
 ---
 title: "godaddy nested data"
-knit: (function(input_file, encoding) {
-  out_dir <- 'docs';
-  rmarkdown::render(input_file,
-    encoding=encoding,
-    output_file=file.path(dirname(input_file), out_dir, 'index.html))})
+author: "christian reetz"
+date: "2023-01-25"
+output: github_document
+
 
 ---
 

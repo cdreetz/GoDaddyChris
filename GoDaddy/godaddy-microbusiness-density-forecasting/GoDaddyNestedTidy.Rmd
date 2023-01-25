@@ -1,0 +1,152 @@
+---
+title: "godaddy nested data"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+```{r}
+library(readr)
+census_starter <- read_csv("godaddy-microbusiness-density-forecasting/census_starter.csv")
+train <- read_csv("godaddy-microbusiness-density-forecasting/train.csv")
+test <- read_csv("godaddy-microbusiness-density-forecasting/test.csv")
+```
+
+```{r}
+IDS <- unique(train$cfips)
+
+x_train <- array(0:(39-1), dim=c(39,1)) #Use the first 38 months to train
+x_test <- array(38:47, dim=c(10,1)) #Use following 10 months to test
+
+preds <- matrix(0, nrow = length(IDS), ncol=8) #Create matrix of 0's for predictions
+last_preds <- matrix(0, nrow = length(IDS), ncol = 8) #Create matrix of 0's for last predictions
+lin_trend = 0
+
+ct = 0
+```
+
+```{r}
+for (i,c) in seq_along(IDS) {
+  df <- train[train$cfips==c,]
+  last <- df$microbusiness_density[length(df$microbusiness_density)]
+  active <- 
+}
+```
+
+
+### Nested Data
+
+# Nested Data Frames by County
+```{r}
+library(modelr)
+library(tidyverse)
+library(dplyr)
+library(gapminder)
+```
+#Nest
+```{r}
+by_county <- train %>%
+  group_by(cfips, state) %>%
+  nest()
+```
+#Model-fitting function
+```{r}
+county_model <- function(df) {
+  lm(microbusiness_density ~ first_day_of_month, data = df)
+}
+```
+#Apply to each element
+```{r}
+models <- map(by_county$data, county_model)
+```
+#Adding models to dataframe
+```{r}
+by_county <- by_county %>%
+  mutate(model = map(data, county_model))
+```
+
+```{r}
+by_county %>% 
+  filter(state == "Texas")
+```
+#Adding residuals of each model
+```{r}
+by_county <- by_county %>%
+  mutate(
+    resids = map2(data, model, add_residuals)
+  )
+```
+#Unnesting
+```{r}
+resids <- unnest(by_county, resids)
+```
+#Plotting the residuals
+```{r}
+resids %>%
+  ggplot(aes(first_day_of_month, resid)) +
+  geom_line(aes(group = cfips), alpha = 1/3) +
+  geom_smooth(se = FALSE)
+
+```
+#Facetting by state
+```{r}
+resids %>% 
+  ggplot(aes(first_day_of_month, resid, group = cfips)) +
+  geom_line(alpha = 1/3) +
+  facet_wrap(~state)
+```
+#Extracting model quality
+```{r}
+glance <- by_county %>% 
+  mutate(glance = map(model, broom::glance)) %>%
+  unnest(glance)
+```
+#Arrange by R square
+```{r}
+glance %>% 
+  arrange(r.squared)
+```
+#Plot worst r squared
+```{r}
+glance %>% 
+  ggplot(aes(state, r.squared)) +
+  geom_jitter(width = 0.5) +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+#Fable 
+#Load packages
+```{r}
+library(fable)
+library(tsibble)
+library(tsibbledata)
+library(lubridate)
+library(dplyr)
+```
+#Keeping tibble format
+```{r}
+texas_001 <- by_county %>%
+  filter(
+    state %in% c("Texas"),
+    cfips == "48001"
+  )
+```
+
+```{r}
+by_county %>%
+  filter(
+    state %in% c("Texas"),
+    cfips == "48001"
+  ) %>%
+  model(
+    ets = ETS(box_cox(microbusiness_density, 0.3)),
+    arima = ARIMA(log(microbusiness_density)),
+    snaive = SNAIVE(microbusiness_density)
+  ) %>%
+  forecast(h ="2 months") %>%
+  autoplot(filter(by_county))
+```
+
+t
