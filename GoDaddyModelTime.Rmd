@@ -1,0 +1,153 @@
+---
+title: "modeltime"
+output: html_notebook
+---
+
+```{r}
+library(readr)
+census_starter <- read_csv("GoDaddy/godaddy-microbusiness-density-forecasting/census_starter.csv")
+train <- read_csv("GoDaddy/godaddy-microbusiness-density-forecasting/train.csv")
+test <- read_csv("GoDaddy/godaddy-microbusiness-density-forecasting/test.csv")
+```
+
+
+# Combine train and test sets
+```{r}
+raw <- bind_rows(train, test) %>%
+  arrange(cfips, row_id) %>%
+  #reset index
+  rownames_to_column() %>%
+  mutate(index = 1:n()) %>%
+  select(-rowname) %>%
+  select(row_id, cfips, first_day_of_month, microbusiness_density) %>%
+  set_names(c("id", "cfips", "date", "density"))
+```
+
+# Create nested time series tibble
+```{r}
+nested_raw <- raw %>%
+  nest_timeseries(
+    .id_var = cfips,                #grouping by cfips
+    .length_actual = 39,            #defines the 39 months of actual data
+    .length_future = 8              #defines the 8 months to forecast after
+  ) %>%
+  split_nested_timeseries(
+    .length_test = 2                #uses the last 2 months of actual data to test
+  )
+```
+
+## Step 1 Create tidymodels workflow
+
+## Prophet
+```{r}
+rec_prophet <- recipe(density ~ date, extract_nested_train_split(nested_raw))
+
+wflw_prophet <- workflow() %>%
+  add_model(
+    prophet_reg("regression") %>%
+      set_engine("prophet")
+  ) %>%
+  add_recipe(rec_prophet)
+```
+
+## XGBoost
+```{r}
+rec_xgb <- recipe(density ~ ., extract_nested_train_split(nested_raw)) %>%
+  step_timeseries_signature(date) %>%
+  step_rm(date) %>%
+  step_zv(all_predictors()) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE)
+
+wflw_xgb <- workflow() %>%
+  add_model(
+    boost_tree("regression") %>%
+      set_engine("xgboost")
+    ) %>%
+  add_recipe(rec_xgb)
+```
+
+
+# Step 2 Nested Modeltime Tables
+
+```{r}
+nested_modeltime_tbl <- modeltime_nested_fit(
+  # Nested data
+  nested_data = nested_raw,
+  
+  # Add workflows
+  wflw_prophet,
+  wflw_xgb
+)
+
+nested_modeltime_tbl
+```
+
+## Logged Attributes
+```{r}
+nested_modeltime_tbl %>%
+  extract_nested_test_accuracy() %>%
+  table_modeltime_accuracy(.interactive = F)
+```
+
+## Extract nested test forecast
+```{r eval=FALSE, include=FALSE}
+nested_modeltime_tbl %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  plot_modeltime_forecast(
+    .facet_ncol = 2,
+    .interactive = FALSE
+  )
+```
+
+## Extract nested error logs
+```{r}
+nested_modeltime_tbl %>%
+  extract_nested_error_report()
+```
+
+# Select the best
+```{r}
+best_nested_modeltime_tbl <- nested_modeltime_tbl %>%
+  modeltime_nested_select_best(
+    metric                = "rmse",
+    minimize              = TRUE,
+    filter_test_forecasts = TRUE
+  )
+```
+
+## Extract nested best model report
+```{r}
+best_nested_modeltime_tbl %>%
+  extract_nested_best_model_report()
+```
+
+## Extract nested best test forecasts
+```{r eval=FALSE, include=FALSE}
+best_nested_modeltime_tbl %>%
+  extract_nested_test_forecast() %>%
+  group_by(id) %>%
+  plot_modeltime_forecast(
+    .facet_ncol = 2,
+    .interactive = FALSE
+  )
+```
+
+# Step 5 Refitting and Future Forecast
+Now that we have all the best models in hand, we can make future forecasts by refitting the models to the full dataset
+
+```{r}
+nested_modeltime_tbl <- best_nested_modeltime_tbl %>%
+  modeltime_nested_refit(
+    control = control_nested_refit(verbose = TRUE)
+  )
+```
+
+## Extract nested future forecast
+```{r eval=FALSE, include=FALSE}
+nested_modeltime_tbl %>%
+  extract_nested_future_forecast() %>%
+  group_by(id) %>%
+  plot_modeltime_forecast()
+```
+
